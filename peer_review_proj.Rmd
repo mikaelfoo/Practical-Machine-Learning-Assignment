@@ -1,0 +1,226 @@
+---
+title: "Practical Machine Learning: Prediction Assignment"
+author: "mike foo"
+date: "2/23/2021"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+<!-- ## R Markdown -->
+
+<!-- "This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>. -->
+
+<!-- When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:" -->
+
+## Objective Explanation
+The goal of this project is to predict the manner in which they did the exercise. This is the "classe" variable in the training set. You may use any of the other variables to predict with. You should create a report describing how you built your model, how you used cross validation, what  the expected out of sample error is, and why are the choices you made . You will also use your prediction model to predict 20 different test cases.
+
+
+### Start - Library and data loading
+The folowing block load the relevant data
+
+```{r, load_data, echo=TRUE, include=FALSE}
+library(caret)
+library('forecast')
+library(AppliedPredictiveModeling)
+library(dplyr)
+library(ElemStatLearn)
+library(glmnet)
+library(data.table)
+library("klaR")
+library('xgboost')
+library(e1071)
+ori_data<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv")
+#data2<-lapply(data.frame(data[,1:11],data[,37:49],data[,60:68],data[,84:86],data[,102],data[,113:124],data[,151:160]), as.factor)
+assignment_data<-read.csv("https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv")
+#assignment_data2<-lapply(data.frame(assignment_data[,1:11],assignment_data[,37:49],assignment_data[,60:68],assignment_data[,84:86],assignment_data[,102],assignment_data[,113:124],assignment_data[,151:160]), as.factor)
+
+```
+
+Subsequently, remove the columns that has empty or invalid data.
+
+Split the data into training set and test set. Training set on the training data is is split 3/4 for training and 1/4 for testing. The testing data is used to further validate the model prior to running prediction on the prediction assignment test set. training2 and testing2 has empty column and NA data removed from the data sets. The testing data set is sampled as part of the bagging approach. 
+
+The assignment data sets also go through the same treatment. 
+
+```{r cross_validation}
+
+set.seed(1013)
+
+ori_data <- ori_data %>% type.convert()
+assignment_data <- assignment_data %>% type.convert()
+
+inTrain = createDataPartition(ori_data$classe, p = 3/4)[[1]]
+training = ori_data[ inTrain,]
+testing = ori_data[-inTrain,]
+
+training2<-data.frame(training[,1:11],training[,37:49],training[,60:68],training[,84:86],training[,101:102],training[,113:124],training[,151:160]) 
+training2<-training2[,-37]
+testing2<-data.frame(testing[,1:11],testing[,37:49],testing[,60:68],testing[,84:86],testing[,101:102],testing[,113:124],testing[,151:160])
+testing2<-testing2[,-37]
+#randomized testing2 entry
+for (i in 1:dim(testing2)[1]){
+  ss<-sample(1:dim(testing2)[1],)
+  testing3<-testing2[ss, ]
+}
+
+assignment_data2<-data.frame(assignment_data[,1:11],assignment_data[,37:49],assignment_data[,60:68],assignment_data[,84:86],assignment_data[,101:102],assignment_data[,113:124],assignment_data[,151:160])
+assignment_data2<-assignment_data2[,-37]
+
+
+#assignment_data2 <- assignment_data2 %>% type.convert()
+
+#training2 <- training2 %>% type.convert()
+
+```
+
+Support vector machine(SVM) model training and its summary.
+
+```{r svm}
+
+svm1<-svm(classe~., data=training2, method="C-classification", kernal="radial",na.action = na.omit,gamma=0.1,cost=40)
+summary(svm1)
+```
+The prediction for the trained SVM model on test set has a accuracy of 0.9988, which is high. 
+
+```{r svm test}
+prediction<-predict(svm1, testing3)
+#prediction
+confusionMatrix(prediction, testing3$classe)
+
+```
+
+
+ Model training of tree-based model by rpart and random forest.
+
+```{r rpart and rf training, echo=TRUE, include=FALSE}
+
+# glm model can only be trained with binary classification problem.
+#rfModel<-train(classe~.-cvtd_timestamp-raw_timestamp_part_1-raw_timestamp_part_2, method="rf", data=training2, prox=TRUE, na.action = na.omit )
+trainCtrl <- trainControl(method = "cv", number = 10, savePredictions = TRUE)
+rfPCAModel<-train(classe~., method="rf", data=training2, prox=TRUE, na.action = na.omit, trControl = trainCtrl )
+rpartModel<-train(classe~., method="rpart", data=training2, tuneLength = 20,na.action = na.omit)
+#glmPCAModel<-train(classe~., method="glm",preProcess = "pca", na.action = na.omit, data=training2 )
+#ldamodel<-train(classe~., method="lda", data=training2, na.action = na.omit, console = FALSE )
+#gbmModel<-train(classe~., method="gbm", data=training2, na.action = na.omit,trControl = trainCtrl, console = FALSE  )
+
+```
+
+
+```{r model prediction, echo=FALSE, include=FALSE}
+
+#rf_pred<- predict(rfModel, testing2)
+#gbm_pred<-predict(gbmModel, testing)
+rpart_pred<- predict(rpartModel, testing2)
+rfPCA_pred<-predict(rfPCAModel , testing2)
+#lda_pred<-predict(ldamodel, testing2)
+
+confusionMatrix(rpart_pred, testing2$classe)
+confusionMatrix(rfPCA_pred, testing2$classe)
+#confusionMatrix(lda_pred, testing2$classe)
+```
+
+
+The test set is a re-sampled with its sequence and orientation scrambled. 
+Prediction is done based on the re-sampled sequence.
+The confusion matrix indicated that rpart has an accuracy of 0.9998 and random forest having accuracy of 1.
+
+```{r model prediction2}
+
+
+
+rpart_pred_rr<- predict(rpartModel, testing3[,1:58])
+rfPCA_pred_rr<-predict(rfPCAModel , testing3[,1:58])
+#lda_pred<-predict(ldamodel, testing2)
+
+confusionMatrix(rpart_pred_rr, testing3$classe)
+confusionMatrix(rfPCA_pred_rr, testing3$classe)
+#confusionMatrix(lda_pred, testing2$classe)
+```
+
+The training of the lasso model with two different alpha paramenters
+
+```{r lasso training, echo=TRUE, include=FALSE}
+
+ x<-model.matrix(classe~., training2)[,-1]
+ y<-as.factor(training2$classe)
+ cv.lasso <- cv.glmnet(x, y, alpha = 0.01, family = "multinomial", na.action = na.omit)
+ lasso_model_1 <- glmnet(x, y, alpha = 0.01, family = "multinomial",lambda = cv.lasso$lambda.min, na.action = na.omit)
+ cv.lasso <- cv.glmnet(x, y, alpha = 0.7, family = "multinomial", na.action = na.omit)
+ lasso_model_2 <- glmnet(x, y, alpha = 0.7, family = "multinomial",lambda = cv.lasso$lambda.min, na.action = na.omit)
+# coef(lasso_model_1)
+# coef(lasso_model_2)
+```
+
+The first parameter (a=0.01) has an accuracy of 0.9407 whereas the second parameter(a=0.7) only have the accuracy of 0.19. 
+
+```{r lasso model predict testset, warning = FALSE}
+#confusionMatrix(testing2$classe, predict(modelFit, testing2))
+
+# Make predictions on the test data
+x.test <- sparse.model.matrix(classe ~., testing2 )[,-1]
+probabilities <- lasso_model_1 %>% predict(newx = x.test)
+predicted_testing1<-as.factor(colnames(probabilities[,,1])[max.col(probabilities[,,1], ties.method = "first")])
+confusionMatrix(predicted_testing1, testing2$classe)
+
+x.test <- sparse.model.matrix(classe ~., testing2)[,-1]
+probabilities2 <- lasso_model_2 %>% predict(newx = x.test)
+predicted_testing2<-as.factor(colnames(probabilities2[,,1])[max.col(probabilities2[,,1], ties.method = "first")])
+confusionMatrix(predicted_testing2, testing2$classe)
+
+```
+### Test Set Results discussion
+
+The findings so far shows that lasso model with alpha=0.01, rpart, random forest, and SVM has a high accuracy in prediction of test set. However, it is not clear how well it deals with out of sample data. 
+
+### Assignment Data Prediction
+The following block does additional treatment on the assignment data(to prevent prediction error and warnings). 
+```{r assignment data preprocessing, echo=TRUE}
+#aX.test<-model.matrix(new_window ~.-cvtd_timestamp-raw_timestamp_part_1-raw_timestamp_part_2, assignment_data2)[,-1]
+#aprobabilities <- model %>% predict(newx = aX.test)
+#predicted_assignment2<-as.factor(colnames(aprobabilities[,,1])[max.col(aprobabilities[,,1], ties.method = "first")])
+assignment_data3<-data.frame(assignment_data2[,1:58], testing3[3000:3019,59,drop = FALSE])
+assignment_data3<-rbind(assignment_data3,testing3[1,])
+assignment_data3<-assignment_data3[-21,]
+#assignment_data2[2,60]<-"B"
+#levels(assignment_data2[,6])<-levels(training2[,6])
+#assignment_data2[2,6]<-"yes"
+```
+
+Prediction on assignment data based on lasso model alpha = 0.01.
+```{r lasso model assignment prediction, echo=FALSE}
+#confusionMatrix(testing2$classe, predict(modelFit, testing2))
+
+# Make predictions on the test data
+x.test <- sparse.model.matrix(classe ~., assignment_data3[1:20,], contrasts.arg = )[,-1]
+probabilities_3 <- lasso_model_1 %>% predict(newx = x.test)
+predicted_assig3<-as.factor(colnames(probabilities_3[,,1])[max.col(probabilities_3[,,1], ties.method = "first")])
+predicted_assig3
+
+#probabilities_4 <- lasso_model_2 %>% predict(newx = x.test)
+#predicted_assig4<-as.factor(colnames(probabilities_4[,,1])[max.col(probabilities_4[,,1], ties.method = "first")])
+#predicted_assig4
+#confusionMatrix(predicted_assig3, testing2$classe)
+
+```
+
+prediction1 is the output for support vector machine model, prediction2 is the output for rpart model, 
+and prediction3 is the output for random forest model. 
+```{r assignment prediction}
+
+prediction1<-predict(svm1, assignment_data3[1:20,1:58])
+prediction1
+prediction2<-predict(rpartModel, assignment_data3[1:20,1:58])
+prediction2
+prediction3<-predict(rfPCAModel, assignment_data2[1:20,1:58])
+prediction3
+
+```
+
+### Conclusion and findings
+
+The lasso model, rpart , and random forest all depicted similar result. However, SVM predicted a different result. With one model having an odd prediction result in comparison to the rest of the models, it seems to suggest that over fitting occur in these three models . 
+
